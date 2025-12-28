@@ -27,27 +27,20 @@ echo "=============================================="
 echo "  CB Fir Setup (Alliance)"
 echo "=============================================="
 
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRATCH_DIR="/scratch/memoozd"
+REPO_DIR="$SCRATCH_DIR/harmful-agents-meta-dataset"
+VENV_DIR="$SCRATCH_DIR/.venvs/cb_env"
+CACHE_ROOT="$SCRATCH_DIR/cb_cache"
 
-# Fir scratch is documented as $HOME/scratch; allow override if you use something else.
-: "${SCRATCH_DIR:=$HOME/scratch}"
+mkdir -p "$SCRATCH_DIR/.venvs" "$REPO_DIR/logs" "$CACHE_ROOT"/{hf,wandb,torch,xdg}
+cd "$REPO_DIR"
 
-# Venv location (override via ENV_ROOT/ENV_NAME)
-: "${ENV_ROOT:=$SCRATCH_DIR/.venvs}"
-: "${ENV_NAME:=cb_env}"
-VENV_DIR="$ENV_ROOT/$ENV_NAME"
+echo "Repo:   $REPO_DIR"
+echo "Venv:   $VENV_DIR"
+echo "Cache:  $CACHE_ROOT"
 
-mkdir -p "$ENV_ROOT"
-mkdir -p "$REPO_DIR/logs"
-
-echo "Repo:      $REPO_DIR"
-echo "Scratch:   $SCRATCH_DIR"
-echo "Env root:  $ENV_ROOT"
-echo "Venv dir:  $VENV_DIR"
-
-# Alliance modules (Fir should have these; adjust versions if needed)
-source /cvmfs/soft.computecanada.ca/config/profile/bash.sh
-module purge
+# Modules (Fir already has `module`; no extra sourcing needed)
+module purge || true
 module load StdEnv/2023
 module load cuda/12.6
 module load python/3.11.5
@@ -74,10 +67,6 @@ source "$VENV_DIR/bin/activate"
 python -V
 which python
 
-# Put caches on scratch (avoid $HOME quotas + improve IO)
-: "${CACHE_ROOT:=$SCRATCH_DIR/cb_cache}"
-mkdir -p "$CACHE_ROOT"/{hf,wandb,torch,xdg}
-
 export HF_HOME="$CACHE_ROOT/hf"
 export TRANSFORMERS_CACHE="$CACHE_ROOT/hf/transformers"
 export HF_DATASETS_CACHE="$CACHE_ROOT/hf/datasets"
@@ -89,30 +78,11 @@ echo "Cache root: $CACHE_ROOT"
 
 uv pip install --upgrade pip setuptools wheel
 
-# Install PyTorch with CUDA wheels (kept consistent with the Trillium script)
-echo "Installing PyTorch..."
-uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+echo "Installing Python deps (requirements.txt)..."
+uv pip install -r requirements.txt
 
-# Install core deps (same set as scripts/hpc_setup_trillium.sh)
-uv pip install \
-  "transformers>=4.45.0" \
-  "peft>=0.13.0" \
-  "accelerate>=1.0.0" \
-  "bitsandbytes>=0.44.0" \
-  "deepspeed>=0.15.0" \
-  "sentencepiece>=0.2.0" \
-  "protobuf>=4.25.0" \
-  "wandb>=0.18.0" \
-  "tensorboard>=2.17.0" \
-  "pandas>=2.0.0" \
-  "numpy>=1.24.0" \
-  "pyarrow>=15.0.0" \
-  "datasets>=2.19.0" \
-  "huggingface-hub>=0.25.0" \
-  "tqdm>=4.66.0"
-
-echo "Installing flash-attn (optional, may take time)..."
-uv pip install flash-attn --no-build-isolation || true
+echo "Ensuring CUDA PyTorch wheels (cu121)..."
+uv pip install --upgrade torch torchvision --index-url https://download.pytorch.org/whl/cu121
 
 python - << 'PY'
 import torch

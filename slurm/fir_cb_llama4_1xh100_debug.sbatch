@@ -5,6 +5,7 @@
 #SBATCH --cpus-per-task=12
 #SBATCH --gpus=h100:1
 #SBATCH --time=00:15:00
+#SBATCH --chdir=/scratch/memoozd/harmful-agents-meta-dataset
 #SBATCH --output=logs/%x_%j.out
 #SBATCH --error=logs/%x_%j.err
 #SBATCH --account=def-zhijing  # TODO: set your RAC / def-* account
@@ -33,33 +34,16 @@
 
 set -euo pipefail
 
-echo "=========================================="
-echo "Job started: $(date)"
-echo "Host:        $(hostname)"
-echo "Submit dir:  ${SLURM_SUBMIT_DIR:-N/A}"
-echo "Work dir:    $(pwd)"
-echo "=========================================="
-
-# --- Paths (edit if your layout differs) ---
-REPO_DIR="/scratch/memoozd/harmful-agents-meta-dataset"
-VENV_DIR="/scratch/memoozd/.venvs/cb_env"
-
-# If you submitted from inside the repo, prefer that.
-if [[ -n "${SLURM_SUBMIT_DIR:-}" && -d "$SLURM_SUBMIT_DIR" ]]; then
-  if [[ -f "$SLURM_SUBMIT_DIR/requirements.txt" ]]; then
-    REPO_DIR="$SLURM_SUBMIT_DIR"
-  fi
-fi
+SCRATCH_DIR="/scratch/memoozd"
+REPO_DIR="$SCRATCH_DIR/harmful-agents-meta-dataset"
+VENV_DIR="$SCRATCH_DIR/.venvs/cb_env"
 
 cd "$REPO_DIR"
 
-# Must exist before Slurm opens stdout/stderr files (see #SBATCH --output/--error).
-mkdir -p logs
+# If you use logs/ outputs, create it once before sbatch:
+#   mkdir -p /scratch/memoozd/harmful-agents-meta-dataset/logs
 
-# --- Modules / environment ---
-# These are typical on Alliance clusters; adjust if Fir has different module names.
-source /cvmfs/soft.computecanada.ca/config/profile/bash.sh
-module purge
+module purge || true
 module load StdEnv/2023
 module load cuda/12.6
 module load python/3.11.5
