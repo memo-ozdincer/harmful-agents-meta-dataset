@@ -47,6 +47,19 @@ from accelerate import Accelerator
 from accelerate.utils import set_seed
 
 from .config import CircuitBreakerConfig
+from .hf_utils import resolve_hf_token
+from scripts.utils.wandb_logging import (
+    build_wandb_init_kwargs,
+    config_to_dict_for_wandb,
+    default_run_name,
+    get_git_metadata,
+    get_host_metadata,
+    get_slurm_metadata,
+    log_dir_as_artifact,
+    parse_tags,
+    wandb_is_available,
+    write_wandb_run_ref,
+)
 
 
 # =============================================================================
@@ -786,25 +799,74 @@ class CircuitBreakerTrainer:
     
     def __init__(self, config: CircuitBreakerConfig):
         self.config = config
+
+        # Resolve whether W&B is actually usable (package present).
+        if self.config.use_wandb and not wandb_is_available():
+            self.config.use_wandb = False
+
         self.accelerator = Accelerator(
-            gradient_accumulation_steps=config.gradient_accumulation_steps,
-            log_with="wandb" if config.use_wandb else None,
-            project_dir=config.output_dir,
+            gradient_accumulation_steps=self.config.gradient_accumulation_steps,
+            log_with="wandb" if self.config.use_wandb else None,
+            project_dir=self.config.output_dir,
         )
         
         # Set seed for reproducibility
         set_seed(42)
         
-        # Initialize logging
-        if config.use_wandb and self.accelerator.is_main_process:
-            self.accelerator.init_trackers(
-                project_name=config.wandb_project,
-                config=self._config_to_dict(),
-                init_kwargs={"wandb": {"name": config.wandb_run_name}},
+        # Initialize logging (rank-0 only)
+        if self.config.use_wandb and self.accelerator.is_main_process:
+            repo_dir = Path(__file__).resolve().parents[2]
+            slurm_meta = get_slurm_metadata()
+            host_meta = get_host_metadata()
+            git_meta = get_git_metadata(repo_dir)
+
+            # Derive defaults from env when not explicitly configured.
+            env_group = os.environ.get("WANDB_GROUP")
+            env_entity = os.environ.get("WANDB_ENTITY")
+            env_tags = parse_tags(os.environ.get("WANDB_TAGS"))
+            env_mode = os.environ.get("WANDB_MODE")
+
+            if not self.config.wandb_run_name:
+                self.config.wandb_run_name = default_run_name(
+                    base_model=self.config.base_model,
+                    total_steps=self.config.total_steps,
+                )
+
+            init_kwargs = build_wandb_init_kwargs(
+                run_name=self.config.wandb_run_name,
+                group=self.config.wandb_group or env_group,
+                entity=self.config.wandb_entity or env_entity,
+                tags=(self.config.wandb_tags or env_tags),
+                notes=self.config.wandb_notes,
+                dir_path=os.environ.get("WANDB_DIR"),
+                mode=self.config.wandb_mode or env_mode,
             )
+
+            wb_config = config_to_dict_for_wandb(self.config)
+            wb_config.update({
+                "slurm": slurm_meta,
+                "host": host_meta,
+                **git_meta,
+            })
+
+            self.accelerator.init_trackers(
+                project_name=self.config.wandb_project,
+                config=wb_config,
+                init_kwargs=init_kwargs,
+            )
+
+            write_wandb_run_ref(Path(self.config.output_dir))
         
-        # Load tokenizer
-        self.tokenizer = AutoTokenizer.from_pretrained(config.base_model)
+        # Load tokenizer (HF gated models require an auth token)
+        hf_token = resolve_hf_token()
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            config.base_model,
+            token=hf_token,
+            trust_remote_code=True,
+        )
+        # Right padding is typical for causal LM training.
+        if getattr(self.tokenizer, "padding_side", None) != "right":
+            self.tokenizer.padding_side = "right"
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
         
@@ -833,6 +895,8 @@ class CircuitBreakerTrainer:
     def _load_models(self):
         """Load trainable and frozen reference models."""
         self.accelerator.print(f"Loading model: {self.config.base_model}")
+
+        hf_token = resolve_hf_token()
         
         # Determine dtype
         dtype_map = {
@@ -843,11 +907,16 @@ class CircuitBreakerTrainer:
         torch_dtype = dtype_map.get(self.config.torch_dtype, torch.bfloat16)
         
         # Load trainable model with LoRA
+        # Under multi-GPU Accelerate/DDP, keep device_map=None and let Accelerate place shards.
+        # device_map="auto" is only safe for single-process inference-style loading.
+        device_map = "auto" if self.accelerator.num_processes == 1 else None
+
         self.model = AutoModelForCausalLM.from_pretrained(
             self.config.base_model,
             torch_dtype=torch_dtype,
-            device_map="auto" if self.config.num_gpus == 1 else None,
+            device_map=device_map,
             trust_remote_code=True,
+            token=hf_token,
         )
         
         if self.config.gradient_checkpointing:
@@ -872,8 +941,9 @@ class CircuitBreakerTrainer:
         self.frozen_model = AutoModelForCausalLM.from_pretrained(
             self.config.base_model,
             torch_dtype=torch_dtype,
-            device_map="auto" if self.config.num_gpus == 1 else None,
+            device_map=device_map,
             trust_remote_code=True,
+            token=hf_token,
         )
         self.frozen_model.eval()
         for param in self.frozen_model.parameters():
@@ -1193,7 +1263,8 @@ class CircuitBreakerTrainer:
                     )
                     
                     if self.config.use_wandb:
-                        self.accelerator.log(metrics, step=self.global_step)
+                        if self.accelerator.is_main_process:
+                            self.accelerator.log(metrics, step=self.global_step)
                 
                 # Save checkpoint
                 if self.global_step % self.config.save_steps == 0:
@@ -1204,7 +1275,7 @@ class CircuitBreakerTrainer:
         # Final save
         self.save_checkpoint(final=True)
         
-        if self.config.use_wandb:
+        if self.config.use_wandb and self.accelerator.is_main_process:
             self.accelerator.end_training()
         
         self.accelerator.print("\n✅ Training complete!")
@@ -1228,6 +1299,25 @@ class CircuitBreakerTrainer:
             self.tokenizer.save_pretrained(save_path)
             
             self.accelerator.print(f"💾 Saved checkpoint to {save_path}")
+
+            # Optional W&B artifact logging (final checkpoint only by default).
+            if (
+                self.config.use_wandb
+                and final
+                and getattr(self.config, "wandb_log_artifacts", "none") == "final"
+            ):
+                artifact_name = f"cb-{self.config.wandb_run_name or 'run'}-final"
+                log_dir_as_artifact(
+                    artifact_name=artifact_name,
+                    artifact_type=getattr(self.config, "wandb_artifact_type", "model"),
+                    dir_path=save_path,
+                    aliases=["final"],
+                    metadata={
+                        "global_step": self.global_step,
+                        "output_dir": str(self.config.output_dir),
+                        "base_model": self.config.base_model,
+                    },
+                )
     
     def cleanup(self):
         """Cleanup hooks and resources."""

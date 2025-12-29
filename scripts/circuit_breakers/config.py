@@ -108,6 +108,17 @@ class CircuitBreakerConfig:
     use_wandb: bool = True
     wandb_project: str = "circuit-breakers"
     wandb_run_name: Optional[str] = None
+
+    # Optional W&B metadata (kept minimal; can also be set via env vars)
+    wandb_entity: Optional[str] = None
+    wandb_group: Optional[str] = None
+    wandb_tags: Optional[List[str]] = None
+    wandb_notes: Optional[str] = None
+    # "online" | "offline" | "disabled" (W&B also respects WANDB_MODE)
+    wandb_mode: Optional[str] = None
+    # Artifact logging policy: "none" | "final"
+    wandb_log_artifacts: str = "none"
+    wandb_artifact_type: str = "model"
     
     # === Evaluation ===
     eval_data_path: Optional[str] = None  # Separate eval set if available
@@ -122,6 +133,23 @@ class CircuitBreakerConfigLlama3_8B(CircuitBreakerConfig):
     lora: LoRAConfig = field(default_factory=lambda: LoRAConfig(
         target_layers=list(range(0, 21))
     ))
+    alpha_max: float = 10.0
+    total_steps: int = 150
+    learning_rate: float = 5e-5
+
+
+@dataclass
+class CircuitBreakerConfigLlama3_1_8B_Instruct(CircuitBreakerConfig):
+    """Preset configuration for meta-llama/Llama-3.1-8B-Instruct."""
+    base_model: str = "meta-llama/Llama-3.1-8B-Instruct"
+
+    # 8B Llama variants are typically 32 layers; mid-layer targets are stable defaults.
+    cb_target_layers: List[int] = field(default_factory=lambda: [10, 20])
+
+    lora: LoRAConfig = field(default_factory=lambda: LoRAConfig(
+        target_layers=list(range(0, 21))
+    ))
+
     alpha_max: float = 10.0
     total_steps: int = 150
     learning_rate: float = 5e-5
@@ -184,6 +212,7 @@ class CircuitBreakerConfigLlama4Scout(CircuitBreakerConfig):
 CONFIG_PRESETS = {
     "llama-4-scout": CircuitBreakerConfigLlama4Scout,
     "llama-3-8b": CircuitBreakerConfigLlama3_8B,
+    "llama-3.1-8b-instruct": CircuitBreakerConfigLlama3_1_8B_Instruct,
     "mistral-7b": CircuitBreakerConfigMistral_7B,
     "default": CircuitBreakerConfig,
 }

@@ -19,6 +19,8 @@ import warnings
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+from .hf_utils import resolve_hf_token
+
 # Check availability
 try:
     from unsloth import FastLanguageModel
@@ -124,6 +126,8 @@ def load_with_hf(
 
     print(f"Loading with HuggingFace: {model_name}")
 
+    hf_token = resolve_hf_token()
+
     # Quantization config
     if load_in_4bit:
         bnb_config = BitsAndBytesConfig(
@@ -141,9 +145,10 @@ def load_with_hf(
         device_map=device_map,
         torch_dtype=torch.bfloat16 if not load_in_4bit else None,
         trust_remote_code=True,
+        token=hf_token,
     )
 
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    tokenizer = AutoTokenizer.from_pretrained(model_name, token=hf_token, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 

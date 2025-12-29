@@ -117,6 +117,15 @@ def parse_args():
         default=None,
         help="Output directory for checkpoints",
     )
+
+    # Loss weighting
+    parser.add_argument(
+        "--loss-weighting",
+        type=str,
+        default=None,
+        choices=["single_alpha", "dual"],
+        help="Loss weighting strategy: 'single_alpha' (original) or 'dual' (paper-style)",
+    )
     
     # Logging
     parser.add_argument(
@@ -124,6 +133,44 @@ def parse_args():
         type=str,
         default=None,
         help="Weights & Biases project name",
+    )
+    parser.add_argument(
+        "--wandb-entity",
+        type=str,
+        default=None,
+        help="Weights & Biases entity/team (optional)",
+    )
+    parser.add_argument(
+        "--wandb-group",
+        type=str,
+        default=None,
+        help="Weights & Biases group (e.g., slurm cluster + run family)",
+    )
+    parser.add_argument(
+        "--wandb-tags",
+        type=str,
+        default=None,
+        help="Comma-separated Weights & Biases tags",
+    )
+    parser.add_argument(
+        "--wandb-notes",
+        type=str,
+        default=None,
+        help="Weights & Biases notes (optional)",
+    )
+    parser.add_argument(
+        "--wandb-mode",
+        type=str,
+        default=None,
+        choices=["online", "offline", "disabled"],
+        help="Weights & Biases mode override (also respects WANDB_MODE env var)",
+    )
+    parser.add_argument(
+        "--wandb-log-artifacts",
+        type=str,
+        default=None,
+        choices=["none", "final"],
+        help="Log artifacts to W&B: 'none' or 'final' (final checkpoint only)",
     )
     parser.add_argument(
         "--wandb-run-name",
@@ -205,8 +252,22 @@ def main():
         overrides['max_seq_length'] = args.max_seq_length
     if args.output_dir:
         overrides['output_dir'] = args.output_dir
+    if args.loss_weighting:
+        overrides['loss_weighting'] = args.loss_weighting
     if args.wandb_project:
         overrides['wandb_project'] = args.wandb_project
+    if args.wandb_entity:
+        overrides['wandb_entity'] = args.wandb_entity
+    if args.wandb_group:
+        overrides['wandb_group'] = args.wandb_group
+    if args.wandb_tags:
+        overrides['wandb_tags'] = [t.strip() for t in args.wandb_tags.split(",") if t.strip()]
+    if args.wandb_notes:
+        overrides['wandb_notes'] = args.wandb_notes
+    if args.wandb_mode:
+        overrides['wandb_mode'] = args.wandb_mode
+    if args.wandb_log_artifacts:
+        overrides['wandb_log_artifacts'] = args.wandb_log_artifacts
     if args.wandb_run_name:
         overrides['wandb_run_name'] = args.wandb_run_name
     if args.no_wandb:

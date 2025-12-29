@@ -921,6 +921,7 @@ class CircuitBreakerConfig:
 |--------|-------|------:|------:|---:|-----------|
 | `llama-4-scout` | Llama-4-Scout-17B-16E | 8.0 | 300 | 2e-5 | [12, 24, 36] |
 | `llama-3-8b` | Meta-Llama-3-8B-Instruct | 10.0 | 150 | 5e-5 | [10, 20] |
+| `llama-3.1-8b-instruct` | Llama-3.1-8B-Instruct | 10.0 | 150 | 5e-5 | [10, 20] |
 | `mistral-7b` | Mistral-7B-Instruct-v0.3 | 5.0 | 150 | 5e-5 | [10, 20] |
 
 ### Getting a Config
@@ -953,6 +954,15 @@ config = get_config("llama-4-scout", alpha_max=12.0, total_steps=500)
    huggingface-cli login
    ```
 
+    If you’re running on SLURM/HPC (or want a non-interactive setup), set a token via env var instead:
+
+    ```bash
+    export HF_TOKEN=hf_xxxxx
+    # or: export HUGGINGFACE_HUB_TOKEN=hf_xxxxx
+    ```
+
+    The training/eval code will read `HF_TOKEN` / `HUGGINGFACE_HUB_TOKEN` automatically.
+
 3. **Data preparation:**
    ```bash
    python scripts/ingest_cb_data.py
@@ -982,7 +992,7 @@ accelerate launch --num_processes 8 scripts/train_circuit_breaker.py \
 python scripts/train_circuit_breaker.py --help
 
 Options:
-  --preset {llama-4-scout,llama-3-8b,mistral-7b,default}
+    --preset {llama-4-scout,llama-3-8b,llama-3.1-8b-instruct,mistral-7b,default}
   --base-model TEXT              Override base model
   --alpha-max FLOAT              Max alpha for rerouting loss
   --total-steps INT              Training steps

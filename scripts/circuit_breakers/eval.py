@@ -19,6 +19,8 @@ from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
 
+from .hf_utils import resolve_hf_token
+
 
 # =============================================================================
 # Tool Call Detection Patterns (for Agentic Evaluation)
@@ -188,7 +190,13 @@ def load_cb_model(
     Returns:
         (model, tokenizer) tuple
     """
-    tokenizer = AutoTokenizer.from_pretrained(base_model_path)
+    hf_token = resolve_hf_token()
+
+    tokenizer = AutoTokenizer.from_pretrained(
+        base_model_path,
+        token=hf_token,
+        trust_remote_code=True,
+    )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     
@@ -197,6 +205,7 @@ def load_cb_model(
         torch_dtype=torch_dtype,
         device_map=device,
         trust_remote_code=True,
+        token=hf_token,
     )
     
     if adapter_path:
@@ -831,6 +840,7 @@ def run_full_evaluation(
 def main():
     """CLI for running evaluations."""
     import argparse
+    from pathlib import Path
     
     parser = argparse.ArgumentParser(description="Evaluate Circuit Breaker Model")
     parser.add_argument("--base-model", type=str, required=True, help="Base model path")
@@ -839,8 +849,73 @@ def main():
     parser.add_argument("--benign-data", type=str, required=True, help="Path to benign prompts JSONL")
     parser.add_argument("--output", type=str, default="eval_results.json", help="Output path")
     parser.add_argument("--max-samples", type=int, default=100, help="Max samples per category")
+
+    # Optional W&B logging (standalone eval runs)
+    parser.add_argument("--wandb-project", type=str, default=None, help="W&B project (optional)")
+    parser.add_argument("--wandb-entity", type=str, default=None, help="W&B entity/team (optional)")
+    parser.add_argument("--wandb-group", type=str, default=None, help="W&B group (optional)")
+    parser.add_argument("--wandb-run-name", type=str, default=None, help="W&B run name (optional)")
+    parser.add_argument("--wandb-tags", type=str, default=None, help="Comma-separated W&B tags")
+    parser.add_argument(
+        "--wandb-mode",
+        type=str,
+        default=None,
+        choices=["online", "offline", "disabled"],
+        help="W&B mode override (also respects WANDB_MODE env var)",
+    )
+    parser.add_argument(
+        "--wandb-log-artifact",
+        action="store_true",
+        help="Upload the eval output JSON as a W&B artifact",
+    )
     
     args = parser.parse_args()
+
+    use_wandb = args.wandb_mode != "disabled"
+    wandb_run = None
+    if use_wandb:
+        try:
+            import os
+            from scripts.utils.wandb_logging import (
+                build_wandb_init_kwargs,
+                get_git_metadata,
+                get_host_metadata,
+                get_slurm_metadata,
+                parse_tags,
+                wandb_is_available,
+            )
+
+            if wandb_is_available():
+                repo_dir = Path(__file__).resolve().parents[2]
+                init_kwargs = build_wandb_init_kwargs(
+                    run_name=args.wandb_run_name,
+                    group=args.wandb_group or os.environ.get("WANDB_GROUP"),
+                    entity=args.wandb_entity or os.environ.get("WANDB_ENTITY"),
+                    tags=(parse_tags(args.wandb_tags) or parse_tags(os.environ.get("WANDB_TAGS"))),
+                    notes=None,
+                    dir_path=os.environ.get("WANDB_DIR"),
+                    mode=args.wandb_mode or os.environ.get("WANDB_MODE"),
+                )["wandb"]
+
+                import wandb
+
+                wandb_run = wandb.init(
+                    project=args.wandb_project or os.environ.get("WANDB_PROJECT") or "circuit-breakers",
+                    config={
+                        "base_model": args.base_model,
+                        "adapter_path": args.adapter_path,
+                        "harmful_data": args.harmful_data,
+                        "benign_data": args.benign_data,
+                        "max_samples": args.max_samples,
+                        "output": args.output,
+                        "slurm": get_slurm_metadata(),
+                        "host": get_host_metadata(),
+                        **get_git_metadata(repo_dir),
+                    },
+                    **init_kwargs,
+                )
+        except Exception:
+            wandb_run = None
     
     # Load model
     print(f"Loading model: {args.base_model}")
@@ -870,11 +945,45 @@ def main():
     print(f"Loaded {len(harmful_prompts)} harmful, {len(benign_prompts)} benign prompts")
     
     # Run evaluation
-    run_full_evaluation(
+    results = run_full_evaluation(
         model, tokenizer,
         harmful_prompts, benign_prompts,
         output_path=args.output,
     )
+
+    # Log summary metrics and (optionally) the output file as an artifact.
+    if wandb_run is not None:
+        try:
+            import wandb
+
+            summary = (results or {}).get("summary", {})
+            metrics = {
+                "eval/refusal_rate": summary.get("refusal_rate"),
+                "eval/capability_score": summary.get("capability_score"),
+                "eval/attack_success_rate": summary.get("attack_success_rate"),
+            }
+            metrics = {k: v for k, v in metrics.items() if v is not None}
+            if metrics:
+                wandb.log(metrics)
+
+            if args.wandb_log_artifact:
+                out_path = Path(args.output)
+                if out_path.exists():
+                    art = wandb.Artifact(
+                        name=f"cb-eval-{wandb_run.id}",
+                        type="eval",
+                        metadata={
+                            "base_model": args.base_model,
+                            "adapter_path": args.adapter_path,
+                        },
+                    )
+                    art.add_file(str(out_path))
+                    wandb.log_artifact(art, aliases=["latest"])
+        finally:
+            try:
+                wandb_run.finish()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":
