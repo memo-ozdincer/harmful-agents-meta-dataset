@@ -1,24 +1,27 @@
 #!/bin/bash
-#SBATCH --job-name=cb_llama31_8b_4xh100_fir
+#SBATCH --job-name=cb_llama31_8b_1xh100_debug_fir
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=48
-#SBATCH --gpus=h100:4
-#SBATCH --mem=256G
-#SBATCH --time=01:30:00
+#SBATCH --cpus-per-task=12
+#SBATCH --gpus=h100:1
+#SBATCH --mem=64G
+#SBATCH --time=00:45:00
 #SBATCH --chdir=/scratch/memoozd/harmful-agents-meta-dataset
 #SBATCH --output=logs/%x_%j.out
 #SBATCH --error=logs/%x_%j.err
 #SBATCH --account=def-zhijing
 
 # =============================================================================
-# Circuit Breakers Training - Fir 4×H100 (Llama-3.1-8B-Instruct)
+# Circuit Breakers Training - Fir 1×H100 Debug (Llama-3.1-8B-Instruct)
 # =============================================================================
+#
+# Single-GPU version for testing/debugging. Lower batch size and fewer steps.
+# Use fir_cb_llama31_8b_4xh100.sbatch for full training.
 #
 # Submit from your SCRATCH clone:
 #   cd /scratch/memoozd/harmful-agents-meta-dataset
 #   mkdir -p logs
-#   sbatch slurm/fir_cb_llama31_8b_4xh100.sbatch
+#   sbatch slurm/fir_cb_llama31_8b_1xh100_debug.sbatch
 #
 # Note: HF_TOKEN and WANDB_API_KEY are hardcoded for memoozd
 #
@@ -64,55 +67,33 @@ export WANDB_DIR="$CACHE_ROOT/wandb"
 export TORCH_HOME="$CACHE_ROOT/torch"
 export XDG_CACHE_HOME="$CACHE_ROOT/xdg"
 
-# W&B defaults for HPC. Override when submitting if desired.
-export WANDB_MODE="${WANDB_MODE:-offline}"
+# W&B defaults for HPC (disabled for debug run by default)
+export WANDB_MODE="${WANDB_MODE:-disabled}"
 export WANDB_PROJECT="${WANDB_PROJECT:-circuit-breakers}"
-export WANDB_GROUP="${WANDB_GROUP:-fir_cb_4xh100}"
-export WANDB_TAGS="${WANDB_TAGS:-fir,cb,4xh100,llama31}"
-export WANDB_START_METHOD="${WANDB_START_METHOD:-thread}"
-export WANDB__SERVICE_WAIT="${WANDB__SERVICE_WAIT:-300}"
-
-export MASTER_ADDR="$(hostname)"
-export MASTER_PORT=29500
-export OMP_NUM_THREADS=12
-
-# =============================================================================
-# Memory Optimizations for Circuit Breaker Training
-# =============================================================================
-# The CB trainer loads BOTH a trainable model AND a frozen reference model,
-# which doubles memory requirements. With 4 H100s (80GB each = 320GB total):
-#
-# Llama-3.1-8B in bf16: ~16GB per copy × 2 = ~32GB base per GPU
-# With gradient checkpointing + LoRA, this should fit comfortably.
-#
-# If you still hit OOM, try:
-#   --batch-size 4 --gradient-accumulation-steps 4
-# =============================================================================
 
 # PyTorch memory settings
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
 
 echo "========================================"
-echo "Starting Circuit Breaker Training"
+echo "Circuit Breaker Training - DEBUG (1 GPU)"
 echo "========================================"
 echo "Job ID: $SLURM_JOB_ID"
-echo "GPUs: 4 x H100"
+echo "GPUs: 1 x H100"
 echo "Model: meta-llama/Llama-3.1-8B-Instruct"
-echo "Output: $RUN_DIR/outputs/cb_llama31_8b_instruct"
+echo "Steps: 10 (debug)"
+echo "Output: $RUN_DIR/outputs/cb_llama31_8b_debug"
 echo "========================================"
 
-accelerate launch \
-  --num_processes 4 \
-  --mixed_precision bf16 \
-  --main_process_port $MASTER_PORT \
-  scripts/train_circuit_breaker.py \
-    --preset llama-3.1-8b-instruct \
-    --loss-weighting dual \
-    --total-steps 150 \
-    --batch-size 8 \
-    --gradient-accumulation-steps 2 \
-    --output-dir "$RUN_DIR/outputs/cb_llama31_8b_instruct"
+# Run with single GPU, reduced batch size, minimal steps for testing
+python scripts/train_circuit_breaker.py \
+  --preset llama-3.1-8b-instruct \
+  --loss-weighting dual \
+  --total-steps 10 \
+  --batch-size 4 \
+  --gradient-accumulation-steps 2 \
+  --no-wandb \
+  --output-dir "$RUN_DIR/outputs/cb_llama31_8b_debug"
 
 echo "========================================"
-echo "Training completed!"
+echo "Debug training completed!"
 echo "========================================"
