@@ -859,14 +859,13 @@ class CircuitBreakerTrainer:
         
         # Load tokenizer (HF gated models require an auth token)
         hf_token = resolve_hf_token()
-        # Use local_files_only when HF_HUB_OFFLINE is set to avoid network calls
-        # (transformers still tries model_info() for Mistral regex patching otherwise)
-        local_only = os.environ.get("HF_HUB_OFFLINE", "0") == "1"
+        # Always use local_files_only=True on HPC compute nodes (no internet)
+        # Transformers will retry and timeout gracefully if files are missing from cache.
         self.tokenizer = AutoTokenizer.from_pretrained(
             config.base_model,
             token=hf_token,
             trust_remote_code=True,
-            local_files_only=local_only,
+            local_files_only=True,
         )
         # Right padding is typical for causal LM training.
         if getattr(self.tokenizer, "padding_side", None) != "right":
@@ -901,7 +900,6 @@ class CircuitBreakerTrainer:
         self.accelerator.print(f"Loading model: {self.config.base_model}")
 
         hf_token = resolve_hf_token()
-        local_only = os.environ.get("HF_HUB_OFFLINE", "0") == "1"
         
         # Determine dtype
         dtype_map = {
@@ -922,7 +920,7 @@ class CircuitBreakerTrainer:
             device_map=device_map,
             trust_remote_code=True,
             token=hf_token,
-            local_files_only=local_only,
+            local_files_only=True,
         )
         
         if self.config.gradient_checkpointing:
@@ -950,7 +948,7 @@ class CircuitBreakerTrainer:
             device_map=device_map,
             trust_remote_code=True,
             token=hf_token,
-            local_files_only=local_only,
+            local_files_only=True,
         )
         self.frozen_model.eval()
         for param in self.frozen_model.parameters():

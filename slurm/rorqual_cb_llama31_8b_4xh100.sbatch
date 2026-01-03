@@ -113,10 +113,8 @@ export WANDB_DIR="$CACHE_ROOT/wandb"
 export TORCH_HOME="$CACHE_ROOT/torch"
 export XDG_CACHE_HOME="$CACHE_ROOT/xdg"
 
-# Compute nodes have no outbound internet; force HF/Transformers to use local cache.
-export HF_HUB_OFFLINE=1
-export TRANSFORMERS_OFFLINE=1
-export HF_DATASETS_OFFLINE=1
+# DON'T set HF_HUB_OFFLINE=1 here; it causes Transformers' is_base_mistral check to fail.
+# Instead, let the training script set local_files_only=True, which tolerates metadata checks.
 
 # W&B defaults for HPC (offline since no internet on compute).
 export WANDB_MODE="${WANDB_MODE:-offline}"
